@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, RefreshCcw, LogIn, Search, Loader2, Filter, SortAsc, Newspaper, Calendar, Clock, History, CheckCircle2, Globe } from 'lucide-react';
-import { NewsItem, ViewState, ADMIN_USER, ADMIN_PASS, Source } from './types';
+import { LayoutDashboard, RefreshCcw, LogIn, Search, Loader2, Filter, SortAsc, Newspaper, Calendar, Clock, History, CheckCircle2, Globe, Timer, LayoutGrid, List, AlignJustify } from 'lucide-react';
+import { NewsItem, ViewState, ADMIN_USER, ADMIN_PASS, Source, LayoutMode } from './types';
 import { NewsCard } from './components/NewsCard';
 import { ArticleModal } from './components/ArticleModal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { getNews, saveNews, getSources, incrementViewCount } from './services/storageService';
 import { fetchRawRSS, enhanceNewsBatch } from './services/geminiService';
+import { SourcesView } from './components/SourcesView';
 
 // --- Utility: Similarity Checker ---
 const calculateSimilarity = (str1: string, str2: string): number => {
@@ -40,12 +41,14 @@ const calculateSimilarity = (str1: string, str2: string): number => {
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('feed');
+  const [layout, setLayout] = useState<LayoutMode>('grid');
   const [news, setNews] = useState<NewsItem[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true); // Initial loading true
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingStatus, setLoadingStatus] = useState('');
   const [selectedArticle, setSelectedArticle] = useState<NewsItem | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState(300); // 300 seconds = 5 minutes
   
   // Login State
   const [username, setUsername] = useState('');
@@ -81,13 +84,22 @@ const App: React.FC = () => {
       }
     };
     initData();
+  }, []);
 
-    // Auto update every 5 mins
-    const intervalId = setInterval(() => {
-      handleFetchNews(true);
-    }, 5 * 60 * 1000);
+  // Countdown Timer Logic
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          // Trigger update
+          handleFetchNews(true);
+          return 300; // Reset to 5 mins
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
-    return () => clearInterval(intervalId);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -116,6 +128,7 @@ const App: React.FC = () => {
     if (!isAutoUpdate) {
         setLoading(true);
         setLoadingStatus('الاتصال بالمصادر...');
+        setTimeRemaining(300); // Reset timer on manual update
     }
     
     try {
@@ -240,6 +253,11 @@ const App: React.FC = () => {
     setSources(loadedSources);
   };
 
+  const handleSourceSelect = (sourceName: string) => {
+      setSelectedSourceFilter(sourceName);
+      setView('feed');
+  };
+
   // --- Filtering Logic ---
   const today = new Date();
   
@@ -311,6 +329,12 @@ const App: React.FC = () => {
     return s?.logoUrl;
   };
 
+  const formatTime = (seconds: number) => {
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
   const maxViews = Math.max(...news.map(n => n.views || 0), 0);
   const trendingThreshold = maxViews > 5 ? maxViews * 0.6 : 10;
 
@@ -327,9 +351,24 @@ const App: React.FC = () => {
             <div className="w-8 h-8 bg-red-700 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-md">Y</div>
             <h1 className="text-xl font-bold text-slate-800 hidden sm:block">راصد اليمن <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">Database</span></h1>
           </div>
+          
+          <nav className="hidden md:flex gap-1 mx-4">
+             <button 
+               onClick={() => setView('feed')} 
+               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${view === 'feed' ? 'bg-slate-100 text-slate-900' : 'text-gray-500 hover:text-slate-700'}`}
+             >
+               الرئيسية
+             </button>
+             <button 
+               onClick={() => setView('sources-view')} 
+               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${view === 'sources-view' ? 'bg-slate-100 text-slate-900' : 'text-gray-500 hover:text-slate-700'}`}
+             >
+               المصادر
+             </button>
+          </nav>
 
-          <div className="flex-1 max-w-md mx-4">
-             {view === 'feed' && (
+          <div className="flex-1 max-w-xs md:max-w-md mx-2 md:mx-4">
+             {(view === 'feed' || view === 'sources-view') && (
                <div className="relative group">
                  <input 
                    type="text" placeholder="بحث في الأخبار..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
@@ -342,15 +381,23 @@ const App: React.FC = () => {
 
           <div className="flex items-center gap-2">
              {view === 'feed' && (
-               <button onClick={() => handleFetchNews(false)} disabled={loading}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-full text-sm hover:bg-slate-800 transition-all disabled:opacity-70 shadow-sm"
-               >
-                 {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16} />}
-                 <span className="hidden sm:inline">تحديث</span>
-               </button>
+               <>
+                 {/* Auto Update Countdown */}
+                 <div className="hidden lg:flex items-center gap-1.5 text-xs font-medium text-gray-500 bg-gray-50 px-2 py-1.5 rounded-lg border border-gray-100 whitespace-nowrap" title="الوقت المتبقي للتحديث التلقائي">
+                    <span className="text-gray-400">تحديث:</span>
+                    <span className="font-mono text-blue-600 w-9 text-center">{formatTime(timeRemaining)}</span>
+                 </div>
+
+                 <button onClick={() => handleFetchNews(false)} disabled={loading}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-full text-sm hover:bg-slate-800 transition-all disabled:opacity-70 shadow-sm whitespace-nowrap"
+                 >
+                   {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16} />}
+                   <span className="hidden sm:inline">تحديث</span>
+                 </button>
+               </>
              )}
              {view !== 'admin-dashboard' && (
-               <button onClick={() => setView('admin-login')} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
+               <button onClick={() => setView('admin-login')} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full" title="دخول المدير">
                  <LayoutDashboard size={20} />
                </button>
              )}
@@ -413,8 +460,9 @@ const App: React.FC = () => {
                   })}
                </div>
                
-               {/* Time & Sort Controls */}
-               <div className="flex gap-2 shrink-0">
+               {/* Controls Section: Time, Sort, Layout */}
+               <div className="flex items-center gap-3 shrink-0">
+                  {/* Time Filter */}
                   <div className="flex bg-gray-100 rounded-lg p-1">
                      {['auto', '24h', 'week', 'all'].map((t) => (
                        <button key={t} onClick={() => setTimeFilter(t as any)} 
@@ -424,10 +472,19 @@ const App: React.FC = () => {
                        </button>
                      ))}
                   </div>
+                  
+                  {/* Sort Filter */}
                   <div className="flex bg-gray-100 rounded-lg p-1">
                      <button onClick={() => setSortBy('latest')} title="الأحدث" className={`px-2 py-1 rounded text-xs transition-all ${sortBy === 'latest' ? 'bg-white shadow text-slate-800' : 'text-gray-500 hover:text-gray-700'}`}><SortAsc size={16}/></button>
                      <button onClick={() => setSortBy('popular')} title="الأكثر قراءة" className={`px-2 py-1 rounded text-xs transition-all ${sortBy === 'popular' ? 'bg-white shadow text-amber-600' : 'text-gray-500 hover:text-gray-700'}`}>🔥</button>
                      <button onClick={() => setSortBy('urgent')} title="أخبار عاجلة" className={`px-2 py-1 rounded text-xs transition-all ${sortBy === 'urgent' ? 'bg-white shadow text-red-600' : 'text-gray-500 hover:text-gray-700'}`}>⚠️</button>
+                  </div>
+
+                  {/* Layout Toggles */}
+                  <div className="flex bg-gray-100 rounded-lg p-1 hidden sm:flex">
+                     <button onClick={() => setLayout('grid')} title="شبكة" className={`px-2 py-1 rounded text-xs transition-all ${layout === 'grid' ? 'bg-white shadow text-slate-800' : 'text-gray-500 hover:text-gray-700'}`}><LayoutGrid size={16}/></button>
+                     <button onClick={() => setLayout('list')} title="قائمة" className={`px-2 py-1 rounded text-xs transition-all ${layout === 'list' ? 'bg-white shadow text-slate-800' : 'text-gray-500 hover:text-gray-700'}`}><List size={16}/></button>
+                     <button onClick={() => setLayout('compact')} title="مضغوط" className={`px-2 py-1 rounded text-xs transition-all ${layout === 'compact' ? 'bg-white shadow text-slate-800' : 'text-gray-500 hover:text-gray-700'}`}><AlignJustify size={16}/></button>
                   </div>
                </div>
              </div>
@@ -458,13 +515,21 @@ const App: React.FC = () => {
                     <button onClick={() => handleFetchNews(false)} className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-full text-sm">جلب الأخبار</button>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className={`grid gap-6 ${
+                  layout === 'grid' ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : 
+                  layout === 'list' ? 'grid-cols-1 lg:grid-cols-2' : 
+                  'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' /* Compact uses grid but cards are small */
+                }`}>
                 {processedNews.map(item => (
-                    <NewsCard key={item.id} item={item} onClick={handleArticleClick} trendingThreshold={trendingThreshold} />
+                    <NewsCard key={item.id} item={item} onClick={handleArticleClick} trendingThreshold={trendingThreshold} layout={layout} />
                 ))}
                 </div>
             )}
           </>
+        )}
+
+        {view === 'sources-view' && (
+            <SourcesView sources={sources} onSourceClick={handleSourceSelect} />
         )}
 
         {view === 'admin-login' && (

@@ -53,7 +53,8 @@ const DEFAULT_SOURCES: Source[] = [
     url: 'https://yemenfuture.net/rss.php?cat=1', 
     type: 'rss', 
     active: true,
-    logoUrl: getFavicon('yemenfuture.net')
+    logoUrl: getFavicon('yemenfuture.net'),
+    contentSelector: '.details'
   },
   { 
     id: '7', 

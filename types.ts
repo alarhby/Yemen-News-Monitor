@@ -1,8 +1,10 @@
+
 export interface Source {
   id: string;
   name: string;
   url: string;
   logoUrl?: string; // Custom logo for the source
+  contentSelector?: string; // Custom CSS selector for scraping full content
   type: 'rss' | 'url' | 'xml';
   active: boolean;
 }
@@ -23,7 +25,8 @@ export interface NewsItem {
   isTrending?: boolean;
 }
 
-export type ViewState = 'feed' | 'admin-login' | 'admin-dashboard' | 'article-view';
+export type ViewState = 'feed' | 'admin-login' | 'admin-dashboard' | 'article-view' | 'sources-view';
+export type LayoutMode = 'grid' | 'list' | 'compact';
 
 export const ADMIN_USER = 'admin';
 export const ADMIN_PASS = '12345678';

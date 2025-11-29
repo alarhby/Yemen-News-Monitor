@@ -27,10 +27,10 @@ const fetchWithEncoding = async (url: string, forceEncoding?: string): Promise<s
   return decoder.decode(buffer);
 };
 
-const scrapeFullContent = async (originalUrl: string): Promise<string | null> => {
+const scrapeFullContent = async (originalUrl: string, customSelector?: string): Promise<string | null> => {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); 
+    const timeoutId = setTimeout(() => controller.abort(), 8000); 
 
     const response = await fetch(`${CORS_PROXY}${encodeURIComponent(originalUrl)}`, {
       signal: controller.signal
@@ -43,36 +43,107 @@ const scrapeFullContent = async (originalUrl: string): Promise<string | null> =>
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
 
-    // Remove clutter
-    const scripts = doc.querySelectorAll('script, style, nav, header, footer, .sidebar, .comments, .ads, .advertisement');
+    // --- Helper to extract text from a specific element ---
+    const extractCleanText = (element: Element): string | null => {
+         // Remove junk inside the specific element first
+         const junk = element.querySelectorAll('script, style, iframe, .share, .ads, .related, .meta, .author-box, button, input');
+         junk.forEach(el => el.remove());
+
+         const paragraphs = Array.from(element.querySelectorAll('p, div'));
+         
+         // If no paragraphs found, try getting direct text content if it's a specific block
+         if (paragraphs.length === 0 && element.textContent && element.textContent.length > 100) {
+             return element.textContent.trim();
+         }
+
+         const cleanText = paragraphs
+            .map(p => p.textContent?.trim())
+            .filter(text => {
+                if (!text) return false;
+                if (text.length < 30) return false;
+                if (text.includes('حقوق النشر') || text.includes('جميع الحقوق محفوظة')) return false;
+                if (text.includes('تابعنا على') || text.includes('اشترك في')) return false;
+                if (text.includes('اقرأ أيضاً') || text.includes('مواضيع ذات صلة')) return false;
+                return true;
+            }) 
+            .join('\n\n');
+         
+         return cleanText.length > 100 ? cleanText : null;
+    };
+
+    // 0. Use Custom Selector (CSS or XPath) if provided (Admin Priority)
+    if (customSelector) {
+        try {
+            let el: Element | null = null;
+            const selector = customSelector.trim();
+
+            // Check if it looks like an XPath (starts with / or ( )
+            if (selector.startsWith('/') || selector.startsWith('(')) {
+                const result = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                el = result.singleNodeValue as Element;
+            } else {
+                // Assume CSS Selector
+                el = doc.querySelector(selector);
+            }
+
+            if (el) {
+                const text = extractCleanText(el);
+                if (text) return text;
+            } else {
+                console.warn(`Element not found for selector: ${selector}`);
+            }
+        } catch (e) {
+            console.warn("Invalid Selector provided:", customSelector, e);
+        }
+    }
+
+    // 1. Specific Logic for Yemen Future (yemenfuture.net)
+    if (originalUrl.includes('yemenfuture.net')) {
+        const yfContainer = doc.querySelector('.details') || doc.querySelector('.entry-content');
+        if (yfContainer) {
+            // Remove specific unwanted elements in Yemen Future
+            const junk = yfContainer.querySelectorAll('.share-buttons, .related-news, .tags, .author-box, .post-meta, div[style*="background"]');
+            junk.forEach(el => el.remove());
+            
+            const paragraphs = Array.from(yfContainer.querySelectorAll('p'));
+            return paragraphs
+                .map(p => p.textContent?.trim())
+                .filter(text => text && text.length > 40 && !text.includes('يمن فيوتشر') && !text.includes('تابعنا'))
+                .join('\n\n');
+        }
+    }
+
+    // 2. Generic Cleaning (Global)
+    const scripts = doc.querySelectorAll('script, style, nav, header, footer, .sidebar, .comments, .ads, .advertisement, .share, .related, .meta, .author-info, iframe, button, input, form');
     scripts.forEach(s => s.remove());
 
-    // Try specific selectors for Yemeni news sites
     const selectors = [
       'article', '.article-content', '.entry-content', '#article-body', '.post-content', '.details', '.news-details', '.body-text',
-      '.detail-content'
+      '.detail-content', '#content'
     ];
 
     let contentElement: Element | null = null;
+    let maxScore = 0;
+    
+    // Check specific selectors first
     for (const selector of selectors) {
       const el = doc.querySelector(selector);
-      if (el && el.textContent && el.textContent.length > 500) {
-        contentElement = el;
-        break;
+      if (el) {
+          const pCount = el.querySelectorAll('p').length;
+          const textLen = el.textContent?.length || 0;
+          const score = pCount * 50 + textLen;
+          if (score > maxScore) {
+              maxScore = score;
+              contentElement = el;
+          }
       }
     }
 
     if (!contentElement) contentElement = doc.body;
     if (!contentElement) return null;
 
-    // Extract text from paragraphs to maintain structure
-    const paragraphs = Array.from(contentElement.querySelectorAll('p, div'));
-    const cleanText = paragraphs
-      .map(p => p.textContent?.trim())
-      .filter(text => text && text.length > 30) // Filter short snippets
-      .join('\n\n');
+    return extractCleanText(contentElement);
 
-    return cleanText.length > 300 ? cleanText : null;
   } catch (e) {
     return null;
   }
@@ -122,15 +193,34 @@ export const fetchRSSFeed = async (source: Source): Promise<NewsItem[]> => {
       // Determine Full Content
       let fullContent = "";
       
-      if (encodedContent && encodedContent.length > summary.length) {
-        // Use encoded content if available (remove HTML tags for clean reading)
+      // Strict clean for summary to remove "read more" links
+      summary = summary.replace(/اقرأ المزيد.*/g, '').replace(/Read more.*/g, '').substring(0, 200) + '...';
+
+      // Decide whether to use RSS content or Scrape
+      // Priority: 1. Scrape if customSelector exists. 2. Use RSS encoded if long enough. 3. Scrape if short.
+      
+      const hasCustomSelector = !!source.contentSelector && source.contentSelector.trim().length > 0;
+
+      if (hasCustomSelector) {
+           // Always attempt scrape if selector provided
+           if (link && link !== '#') {
+               const scraped = await scrapeFullContent(link, source.contentSelector);
+               if (scraped) {
+                   fullContent = scraped;
+               } else {
+                   // Fallback to RSS if scraping fails
+                   fullContent = (encodedContent && encodedContent.length > summary.length) ? encodedContent : summary;
+               }
+           }
+      } else if (encodedContent && encodedContent.length > summary.length) {
+        // Use encoded content if available and no custom selector forced
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = encodedContent;
         fullContent = tempDiv.textContent || summary;
       } else {
         fullContent = summary;
-        // Scrape as fallback if content is too short (uncommented for "Max Detail")
-        if (link && link !== '#' && fullContent.length < 500) {
+        // Scrape as fallback for short content
+        if ((link && link !== '#') && fullContent.length < 500) {
            const scraped = await scrapeFullContent(link); 
            if (scraped) fullContent = scraped;
         }
@@ -145,7 +235,7 @@ export const fetchRSSFeed = async (source: Source): Promise<NewsItem[]> => {
         sourceName: source.name,
         originalUrl: link,
         title: title,
-        summary: summary.substring(0, 200) + '...', // Keep summary short for card
+        summary: summary,
         content: fullContent, // Keep full content for modal
         tags: ["أخبار"], 
         imageUrl: finalImageUrl,

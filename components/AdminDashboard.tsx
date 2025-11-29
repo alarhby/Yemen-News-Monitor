@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Globe, Save, LogOut, Info, ChevronDown, ChevronUp, Eye, Loader2, X, Pencil, RotateCcw, Activity, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Globe, Save, LogOut, Info, ChevronDown, ChevronUp, Eye, Loader2, X, Pencil, RotateCcw, Activity, AlertTriangle, Code } from 'lucide-react';
 import { Source, NewsItem } from '../types';
 import { getSources, saveSources } from '../services/storageService';
 import { fetchRawRSS, checkSourcesHealth, SourceHealth } from '../services/geminiService';
@@ -16,10 +16,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   
   // Edit State
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [newSource, setNewSource] = useState<{name: string, url: string, logoUrl: string, type: 'url' | 'rss' | 'xml'}>({
+  const [newSource, setNewSource] = useState<{name: string, url: string, logoUrl: string, contentSelector: string, type: 'url' | 'rss' | 'xml'}>({
     name: '',
     url: '',
     logoUrl: '',
+    contentSelector: '',
     type: 'rss'
   });
 
@@ -68,6 +69,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         name: newSource.name,
         url: newSource.url,
         logoUrl: newSource.logoUrl,
+        contentSelector: newSource.contentSelector,
         type: newSource.type
       } : s);
       setEditingId(null);
@@ -78,6 +80,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         name: newSource.name,
         url: newSource.url,
         logoUrl: newSource.logoUrl,
+        contentSelector: newSource.contentSelector,
         type: newSource.type,
         active: true,
       };
@@ -86,7 +89,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
     setSources(updatedSources);
     await saveSources(updatedSources);
-    setNewSource({ name: '', url: '', logoUrl: '', type: 'rss' });
+    setNewSource({ name: '', url: '', logoUrl: '', contentSelector: '', type: 'rss' });
   };
 
   const handleEditClick = (source: Source) => {
@@ -95,6 +98,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       name: source.name,
       url: source.url,
       logoUrl: source.logoUrl || '',
+      contentSelector: source.contentSelector || '',
       type: source.type
     });
     // Scroll to top
@@ -103,7 +107,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
   const handleCancelEdit = () => {
     setEditingId(null);
-    setNewSource({ name: '', url: '', logoUrl: '', type: 'rss' });
+    setNewSource({ name: '', url: '', logoUrl: '', contentSelector: '', type: 'rss' });
   };
 
   const removeSource = async (id: string) => {
@@ -181,6 +185,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                      <div key={idx} className="bg-white p-3 rounded shadow-sm text-sm">
                          <div className="font-bold">{item.title}</div>
                          <div className="text-gray-500 text-xs mt-1">{item.originalUrl}</div>
+                         <div className="mt-2 text-xs text-gray-400 bg-gray-50 p-2 rounded max-h-20 overflow-hidden">
+                             {item.content.substring(0, 150)}...
+                         </div>
                      </div>
                  ))}
                  {testResult.length === 0 && <p className="text-center text-gray-500">لا توجد أخبار</p>}
@@ -230,7 +237,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </button>
         {showTips && (
           <div className="p-4 pt-0 text-blue-700 text-sm border-t border-blue-100">
-            يمكنك الآن تعديل المصادر بالضغط على زر القلم. استخدم زر "فحص شامل" لمعرفة عدد الأخبار المتاحة في كل مصدر.
+            <p className="mb-2">يمكنك الآن تعديل المصادر بالضغط على زر القلم.</p>
+            <p className="mb-2"><strong>محدد المحتوى (CSS Selector / XPath):</strong> هذا الخيار للمحترفين. إذا كان الخبر يظهر ناقصاً، قم بزيارة الموقع الأصلي، واستخدم "فحص العنصر" لنسخ المسار (XPath) أو الـ Class وضعه هنا.</p>
+            <p className="mb-2 text-xs font-mono bg-blue-100 p-1 inline-block rounded">مثال: //div[@class='details'] أو #content</p>
           </div>
         )}
       </div>
@@ -246,10 +255,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </h3>
             <form onSubmit={handleSubmitSource} className="space-y-4">
               <input type="text" value={newSource.name} onChange={e => setNewSource({...newSource, name: e.target.value})} placeholder="الاسم" className="w-full p-2 border rounded" required />
-              <input type="url" dir="ltr" value={newSource.url} onChange={handleUrlChange} placeholder="الرابط (RSS URL)" className="w-full p-2 border rounded text-left" required />
-              <input type="url" dir="ltr" value={newSource.logoUrl} onChange={e => setNewSource({...newSource, logoUrl: e.target.value})} placeholder="رابط الشعار (اختياري)" className="w-full p-2 border rounded text-left text-sm" />
               
-              <div className="flex gap-2">
+              <div className="space-y-1">
+                <label className="text-xs text-gray-500">رابط المصدر (RSS):</label>
+                <input type="url" dir="ltr" value={newSource.url} onChange={handleUrlChange} placeholder="https://example.com/rss" className="w-full p-2 border rounded text-left" required />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-xs text-gray-500">رابط الشعار (اختياري):</label>
+                <input type="url" dir="ltr" value={newSource.logoUrl} onChange={e => setNewSource({...newSource, logoUrl: e.target.value})} placeholder="https://..." className="w-full p-2 border rounded text-left text-sm" />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-gray-500 flex items-center gap-1"><Code size={12}/> محدد المحتوى (CSS / XPath) - اختياري:</label>
+                <input type="text" dir="ltr" value={newSource.contentSelector} onChange={e => setNewSource({...newSource, contentSelector: e.target.value})} placeholder="مثال: /html/body/... أو .content" className="w-full p-2 border rounded text-left text-sm font-mono bg-gray-50" />
+              </div>
+              
+              <div className="flex gap-2 pt-2">
                 <button type="submit" className="flex-1 bg-blue-600 text-white py-2 rounded flex justify-center items-center gap-2 hover:bg-blue-700 transition">
                     <Save size={18} /> {editingId ? 'تحديث' : 'حفظ'}
                 </button>
@@ -301,7 +323,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                             </span>
                         )}
                      </div>
-                     <p dir="ltr" className="text-xs text-gray-400 truncate max-w-[200px] text-left">{source.url}</p>
+                     <div className="flex flex-col gap-0.5">
+                        <p dir="ltr" className="text-xs text-gray-400 truncate max-w-[200px] text-left">{source.url}</p>
+                        {source.contentSelector && (
+                            <p dir="ltr" className="text-[10px] text-blue-500 font-mono text-left max-w-[200px] truncate">Selector: {source.contentSelector}</p>
+                        )}
+                     </div>
                    </div>
                  </div>
                  <div className="flex items-center gap-1">
