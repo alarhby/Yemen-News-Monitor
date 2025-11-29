@@ -7,8 +7,16 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      // This injects the API key from your local .env file or system environment
       'process.env.API_KEY': JSON.stringify(env.API_KEY || "YOUR_GEMINI_API_KEY_HERE"),
+    },
+    server: {
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+          secure: false,
+        }
+      }
     },
     build: {
       outDir: 'dist',
